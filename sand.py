@@ -25,6 +25,8 @@ class Tile(object):
 
 
 class Entity(object):
+    dynamic = False
+
     def __init__(self, pos_x, pos_y, width, height, color):
         self.pos_x = pos_x
         self.pos_y = pos_y
@@ -67,8 +69,17 @@ class Entity(object):
 
 
 class SandGrain(Entity):
+    dynamic = True
+
     def __init__(self, pos_x, pos_y):
         super().__init__(pos_x, pos_y, 1, 1, colors.gold)
+
+
+class Stone(Entity):
+    dynamic = False
+
+    def __init__(self, pos_x, pos_y):
+        super().__init__(pos_x, pos_y, 1, 1, colors.blue_grey)
 
 
 def distance(a, b, x, y):
@@ -101,15 +112,15 @@ def mouse_up(event, spawn_settings):
         spawn_settings["Spawning"] = False
 
 
-def spawn_entity(tiles, entities, spawn_settings):
+def spawn_entity(tiles, static_entities, dynamic_entities, spawn_settings):
     radius_tiles = get_brush(spawn_settings["Mouse Position"], spawn_settings["Brush Size"])
     valid_tiles = []
     for each in radius_tiles:
-        if each in tiles:
+        if each in tiles and not tiles[each].is_occupied:
             valid_tiles.append(each)
     random_tile = random.choice(valid_tiles)
     new_entity = spawn_settings["Entity Type"](random_tile[0], random_tile[1])
-    entities.append(new_entity)
+    dynamic_entities.append(new_entity)
 
 
 def get_brush_size_stamp(brush_size):
@@ -118,13 +129,23 @@ def get_brush_size_stamp(brush_size):
     brush_size_stamp = font_arimo.render("Brush Size: {0}".format(brush_size), True, (colors.white))
     return brush_size_stamp
 
+
+def get_entity_count_stamp(static_entities, dynamic_entities, screen_width):
+    font_arimo = pygame.font.SysFont('Arimo', 14, True, False)
+    static_entities = str(len(static_entities))
+    dynamic_entities = str(len(dynamic_entities))
+    entity_count_stamp = font_arimo.render("S: {0}  D: {1}".format(static_entities, dynamic_entities), True, (colors.white))
+    width = entity_count_stamp.get_width()
+    spacer = screen_width - (width + 3)
+    return entity_count_stamp, spacer
+
 tiles = {}
 for x in range(0, screen_width):
     for y in range(0, screen_height):
         tiles[(x, y)] = Tile(x, y)
 
-
-entities = []
+static_entities = []
+dynamic_entities = []
 clock = pygame.time.Clock()
 
 spawn_settings = {"Spawning": False,
@@ -147,13 +168,25 @@ while True:
             brush_size_stamp = get_brush_size_stamp(spawn_settings["Brush Size"])
 
     if spawn_settings["Spawning"]:
-        spawn_entity(tiles, entities, spawn_settings)
-    for each in entities:
-        each.fall(tiles, screen_width, screen_height)
+        spawn_entity(tiles, static_entities, dynamic_entities, spawn_settings)
+    new_dynamic_entities = []
+    for each in dynamic_entities:
+        can_fall = each.fall(tiles, screen_width, screen_height)
+        if not can_fall:
+            static_entities.append(each)
+        else:
+            new_dynamic_entities.append(each)
+    dynamic_entities = new_dynamic_entities
+    entity_count_stamp, spacer = get_entity_count_stamp(static_entities,
+                                                        dynamic_entities,
+                                                        screen_width)
+
 
 
     screen.blit(background, [0, 0])
-    for each in entities:
+    for each in static_entities:
+        screen.blit(each.sprite.image, [each.pos_x, each.pos_y])
+    for each in dynamic_entities:
         screen.blit(each.sprite.image, [each.pos_x, each.pos_y])
     pygame.draw.circle(screen,
                        colors.green_2,
@@ -162,6 +195,7 @@ while True:
                        1)
 
     screen.blit(brush_size_stamp, [3, 2])
+    screen.blit(entity_count_stamp, [spacer, 2])
 
     pygame.display.flip()
     clock.tick(60)
