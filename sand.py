@@ -16,22 +16,27 @@ class Tile(object):
         self.x = x
         self.y = y
         self.is_occupied = False
+        self.entity = None
 
-    def set_occupied(self):
+    def set_occupied(self, entity):
         self.is_occupied = True
+        self.entity = entity
 
     def set_vacant(self):
         self.is_occupied = False
+        self.entity = None
 
 
 class Entity(object):
     dynamic = False
+    name = "N/A"
 
-    def __init__(self, pos_x, pos_y, width, height, color):
+    def __init__(self, pos_x, pos_y, width, height, color, inertia):
         self.pos_x = pos_x
         self.pos_y = pos_y
         self.width = width
         self.height = height
+        self.inertia = inertia
         self.sprite = pygame.sprite.Sprite()
         self.sprite.image = pygame.Surface([width, height])
         self.sprite.image.fill(color)
@@ -41,7 +46,7 @@ class Entity(object):
         tile.set_vacant()
 
     def tile_checkin(self, tile):
-        tile.set_occupied()
+        tile.set_occupied(self)
 
     def fall(self, tiles, screen_width, screen_height):
         if self.pos_y < screen_height - 1:
@@ -49,12 +54,11 @@ class Entity(object):
                 self.tile_checkout(tiles[(self.pos_x, self.pos_y)])
                 self.pos_y += 1
                 self.tile_checkin(tiles[(self.pos_x, self.pos_y)])
-                return True
             else:
                 valid_second_choices = []
                 if self.pos_x - 1 > 0 and not tiles[(self.pos_x - 1, self.pos_y + 1)].is_occupied:
                     valid_second_choices.append(tiles[(self.pos_x - 1, self.pos_y + 1)])
-                if self.pos_y + 1 < screen_width - 1 and not tiles[(self.pos_x + 1, self.pos_y + 1)].is_occupied:
+                if self.pos_x + 1 < screen_width - 1 and not tiles[(self.pos_x + 1, self.pos_y + 1)].is_occupied:
                     valid_second_choices.append(tiles[(self.pos_x + 1, self.pos_y + 1)])
                 
                 if len(valid_second_choices) > 0:
@@ -63,23 +67,34 @@ class Entity(object):
                     self.pos_x = random_choice.x
                     self.pos_y = random_choice.y
                     self.tile_checkin(tiles[(self.pos_x, self.pos_y)])
-                    return True
-                else:
-                    return False
+                    
 
 
 class SandGrain(Entity):
     dynamic = True
+    spawn_behavior = 0
+    name = "Sand"
 
     def __init__(self, pos_x, pos_y):
-        super().__init__(pos_x, pos_y, 1, 1, colors.gold)
+        super().__init__(pos_x, pos_y, 1, 1, colors.gold, 1)
+
+
+class Water(Entity):
+    dynamic = True
+    spawn_behavior = 0
+    name = "Water"
+
+    def __init__(self, pos_x, pos_y):
+        super().__init__(pos_x, pos_y, 1, 1, colors.bright_blue, 10000)
 
 
 class Stone(Entity):
     dynamic = False
+    spawn_behavior = 1
+    name = "Stone"
 
     def __init__(self, pos_x, pos_y):
-        super().__init__(pos_x, pos_y, 1, 1, colors.blue_grey)
+        super().__init__(pos_x, pos_y, 1, 1, colors.blue_grey, None)
 
 
 def distance(a, b, x, y):
@@ -112,15 +127,55 @@ def mouse_up(event, spawn_settings):
         spawn_settings["Spawning"] = False
 
 
+def key_down(event, spawn_settings):
+    entity_types = [SandGrain,
+                    Stone,
+                    Water]
+    type_index = entity_types.index(spawn_settings["Entity Type"])
+    if event.key == pygame.K_UP:
+        if type_index == 0:
+            type_index = len(entity_types) - 1
+        else:
+            type_index -= 1
+    elif event.key == pygame.K_DOWN:
+        if type_index == len(entity_types) - 1:
+            type_index = 0
+        else:
+            type_index += 1
+    spawn_settings["Entity Type"] = entity_types[type_index]
+
+
 def spawn_entity(tiles, static_entities, dynamic_entities, spawn_settings):
     radius_tiles = get_brush(spawn_settings["Mouse Position"], spawn_settings["Brush Size"])
-    valid_tiles = []
-    for each in radius_tiles:
-        if each in tiles and not tiles[each].is_occupied:
-            valid_tiles.append(each)
-    random_tile = random.choice(valid_tiles)
-    new_entity = spawn_settings["Entity Type"](random_tile[0], random_tile[1])
-    dynamic_entities.append(new_entity)
+    if spawn_settings["Entity Type"].spawn_behavior == 0:
+        valid_tiles = []
+        for each in radius_tiles:
+            if each in tiles:
+                valid_tiles.append(each)
+        random_tile = random.choice(valid_tiles)
+        new_entity = spawn_settings["Entity Type"](random_tile[0], random_tile[1])
+        dynamic_entities.add(new_entity)
+
+
+    elif spawn_settings["Entity Type"].spawn_behavior == 1:
+        valid_tiles = []
+        for each in radius_tiles:
+            if each in tiles:
+                valid_tiles.append(each)
+        for each in valid_tiles:
+            x = each[0]
+            y = each[1]
+
+            if tiles[x, y].is_occupied:
+                if not tiles[x, y].entity.dynamic:
+                    static_entities.remove(tiles[x, y].entity)
+                if tiles[x, y].entity.dynamic:
+                    dynamic_entities.remove(tiles[x, y].entity)
+                tiles[x, y].entity.tile_checkout(tiles[x, y])
+
+            new_entity = spawn_settings["Entity Type"](x, y)
+            static_entities.add(new_entity)
+            new_entity.tile_checkin(tiles[(x, y)])
 
 
 def get_brush_size_stamp(brush_size):
@@ -139,20 +194,38 @@ def get_entity_count_stamp(static_entities, dynamic_entities, screen_width):
     spacer = screen_width - (width + 3)
     return entity_count_stamp, spacer
 
+def get_entity_type_stamp(spawn_settings):
+    font_arimo = pygame.font.SysFont('Arimo', 14, True, False)
+    name = spawn_settings["Entity Type"].name
+    entity_type_stamp = font_arimo.render("{0}".format(name), True, (colors.white))
+    return entity_type_stamp
+
+
+def update_static_layer(static_layer, static_entities):
+    static_layer.fill(colors.key)
+    for each in static_entities:
+        static_layer.blit(each.sprite.image, [each.pos_x, each.pos_y])
+    static_layer.set_colorkey(colors.key)
+    static_layer = static_layer.convert_alpha()
+    return static_layer
+
 tiles = {}
 for x in range(0, screen_width):
     for y in range(0, screen_height):
         tiles[(x, y)] = Tile(x, y)
 
-static_entities = []
-dynamic_entities = []
+static_entities = set()
+dynamic_entities = set()
 clock = pygame.time.Clock()
 
 spawn_settings = {"Spawning": False,
                   "Mouse Position": (0, 0),
                   "Entity Type": SandGrain,
                   "Brush Size": 10}
+entity_type_stamp = get_entity_type_stamp(spawn_settings)
 brush_size_stamp = get_brush_size_stamp(spawn_settings["Brush Size"])
+static_layer = pygame.Surface((screen_width, screen_height))
+static_layer = update_static_layer(static_layer, static_entities)
 
 while True:
     spawn_settings["Mouse Position"] = pygame.mouse.get_pos()
@@ -166,16 +239,21 @@ while True:
         elif event.type == pygame.MOUSEBUTTONUP:
             mouse_up(event, spawn_settings)
             brush_size_stamp = get_brush_size_stamp(spawn_settings["Brush Size"])
+        elif event.type == pygame.KEYDOWN:
+            key_down(event, spawn_settings)
+            entity_type_stamp = get_entity_type_stamp(spawn_settings)
 
     if spawn_settings["Spawning"]:
         spawn_entity(tiles, static_entities, dynamic_entities, spawn_settings)
-    new_dynamic_entities = []
+        static_layer = update_static_layer(static_layer, static_entities)
+
+    new_dynamic_entities = set()
     for each in dynamic_entities:
-        can_fall = each.fall(tiles, screen_width, screen_height)
-        if not can_fall:
-            static_entities.append(each)
+        each.fall(tiles, screen_width, screen_height)
+        if each.inertia == 0:
+            static_entities.add(each)
         else:
-            new_dynamic_entities.append(each)
+            new_dynamic_entities.add(each)
     dynamic_entities = new_dynamic_entities
     entity_count_stamp, spacer = get_entity_count_stamp(static_entities,
                                                         dynamic_entities,
@@ -184,8 +262,8 @@ while True:
 
 
     screen.blit(background, [0, 0])
-    for each in static_entities:
-        screen.blit(each.sprite.image, [each.pos_x, each.pos_y])
+
+    screen.blit(static_layer, [0, 0])
     for each in dynamic_entities:
         screen.blit(each.sprite.image, [each.pos_x, each.pos_y])
     pygame.draw.circle(screen,
@@ -196,6 +274,7 @@ while True:
 
     screen.blit(brush_size_stamp, [3, 2])
     screen.blit(entity_count_stamp, [spacer, 2])
+    screen.blit(entity_type_stamp, [screen_width / 2 - (entity_type_stamp.get_width() / 2), 2])
 
     pygame.display.flip()
     clock.tick(60)
